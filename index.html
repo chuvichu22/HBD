@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>지점교육 생일자 안내</title>
+<style>
+:root{--bg:#f6f1fa;--ink:#35203a;--sub:#7b6682;--pink:#e5447c;--gold:#f2b134;--card:#fff;--line:#e2d6ea}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif;line-height:1.5}
+.wrap{max-width:860px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:24px;margin:8px 0 4px}
+p.d{margin:0 0 18px;color:var(--sub);font-size:14px}
+.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+h2{font-size:16px;margin:0 0 10px}
+textarea{width:100%;height:170px;border:1px solid var(--line);border-radius:8px;padding:10px;font:13px/1.5 monospace;resize:vertical}
+label{display:block;font-size:13px;color:var(--sub);margin-bottom:4px}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.row>div{flex:1;min-width:160px}
+input[type=date],input[type=month]{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font-size:16px;font-family:inherit}
+button{background:var(--pink);color:#fff;border:0;border-radius:8px;padding:12px 18px;font-size:16px;font-family:inherit;font-weight:700;cursor:pointer}
+button.alt{background:var(--ink)}
+button:disabled{opacity:.4;cursor:default}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+.hint{font-size:12px;color:var(--sub);margin-top:6px}
+table{width:100%;border-collapse:collapse;font-size:15px}
+td,th{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left}
+th{font-size:12px;color:var(--sub);font-weight:600}
+.tag{font-size:11px;padding:1px 7px;border-radius:99px;background:#f3e6ee;color:var(--pink)}
+.tag.l{background:#fdf0d2;color:#9a6a00}
+canvas{width:100%;border-radius:10px;border:1px solid var(--line);display:block;margin-bottom:12px}
+.msg{font-size:13px;color:var(--sub);margin-top:8px}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🎂 지점교육 생일자 안내</h1>
+<p class="d">직원 목록을 붙여넣고 교육 날짜만 넣으면, 음력·양력 상관없이 해당 기간 생일자와 PPT용 이미지를 만들어줘요.</p>
+
+<div class="box">
+<h2>1. 직원 목록 붙여넣기</h2>
+<textarea id="src" placeholder="7/26음력	KJ5221	김은주C&#10;4/25양력	KJ5008	김정남&#10;(엑셀에서 복사해서 그대로 붙여넣기)"></textarea>
+<div class="hint">한 줄에 「생일(월/일+음력·양력) 사번 이름」. 생일이 비어 있는 줄은 자동으로 건너뛰어요. 목록은 이 기기 브라우저에 저장돼요.</div>
+<div class="msg" id="parseMsg"></div>
+</div>
+
+<div class="box">
+<h2>2. 교육 날짜</h2>
+<div class="row">
+<div><label for="prev">지난 교육 달</label><input type="month" id="prev"></div>
+<div><label for="cur">이번 교육 날짜</label><input type="date" id="cur"></div>
+</div>
+<div class="hint" id="rangeHint"></div>
+<p><button id="go">생일자 찾기</button></p>
+</div>
+
+<div class="box hide" id="out">
+<h2>3. 결과</h2>
+<table><thead><tr><th>생일(양력 환산)</th><th>이름</th><th>원래 생일</th></tr></thead><tbody id="rows"></tbody></table>
+<p class="msg" id="empty"></p>
+</div>
+
+<div class="box hide" id="imgBox">
+<h2>4. PPT용 이미지</h2>
+<canvas id="cv" width="1920" height="1080"></canvas>
+<button id="dl" class="alt">이미지 저장 (PNG)</button>
+<div class="hint">PPT에서 「삽입 → 그림」으로 넣으면 16:9 슬라이드에 꽉 차요.</div>
+</div>
+</div>
+
+<script>
+(function(){
+var $=function(i){return document.getElementById(i)};
+var KEY='bdayApp.v1';
+var DOW=['일','월','화','수','목','금','토'];
+var people=[];
+
+function pad(n){return n<10?'0'+n:''+n}
+function utc(y,m,d){return new Date(Date.UTC(y,m-1,d,12))}
+
+/* 목록 파싱 */
+var DATE_RE=/(\d{1,2})\s*\/\s*(\d{1,2})\s*(음력|양력)/;
+function parse(text){
+  var ok=[],skip=0;
+  text.split(/\r?\n/).forEach(function(line){
+    if(!line.trim())return;
+    var m=line.match(DATE_RE);
+    var rest=line.replace(DATE_RE,'');
+    var code=(rest.match(/[A-Za-z]{1,3}\d{3,5}/)||[''])[0];
+    if(code)rest=rest.replace(code,'');
+    var name=rest.replace(/[-\t]/g,' ').replace(/\s+/g,' ').trim();
+    if(!name)return;
+    if(!m){skip++;return}
+    ok.push({name:name,m:+m[1],d:+m[2],lunar:m[3]==='음력'});
+  });
+  return {ok:ok,skip:skip};
+}
+function refreshParse(){
+  var r=parse($('src').value);
+  people=r.ok;
+  $('parseMsg').textContent=$('src').value.trim()?('생일 정보가 있는 직원 '+r.ok.length+'명 인식'+(r.skip?' · 생일 없음 '+r.skip+'명 제외':'')):'';
+}
+
+/* 음력 변환: 브라우저 내장 중국/한국 음력 달력 사용 */
+var fmt=new Intl.DateTimeFormat('en-u-ca-chinese',{month:'numeric',day:'numeric',timeZone:'UTC'});
+function lunarOf(dt){
+  var p=fmt.formatToParts(dt),m,d,leap=false;
+  p.forEach(function(x){
+    if(x.type==='month'){m=parseInt(x.value,10);if(/bis|leap|윤/i.test(x.value))leap=true}
+    if(x.type==='day')d=parseInt(x.value,10);
+  });
+  return {m:m,d:d,leap:leap};
+}
+
+/* 기간 계산: 지난 교육 다음 달 1일 ~ 이번 교육 달 말일 */
+function getRange(){
+  var pv=$('prev').value,cv=$('cur').value;
+  if(!pv||!cv)return null;
+  var py=+pv.slice(0,4),pm=+pv.slice(5,7);
+  var cy=+cv.slice(0,4),cm=+cv.slice(5,7);
+  var sy=pm===12?py+1:py,sm=pm===12?1:pm+1;
+  var start=utc(sy,sm,1);
+  var end=new Date(Date.UTC(cy,cm,0,12));
+  if(end<start)return null;
+  return {start:start,end:end,sm:sm,sy:sy,cm:cm,cy:cy};
+}
+function showRange(){
+  var r=getRange();
+  $('rangeHint').textContent=r?('조회 기간: '+r.sy+'년 '+r.sm+'월 ~ '+r.cy+'년 '+r.cm+'월'):'지난 교육 달과 이번 교육 날짜를 입력하세요 (이번 교육이 더 뒤여야 해요)';
+}
+
+function find(r){
+  var lmap={},res=[],day=new Date(r.start.getTime());
+  while(day<=r.end){
+    var l=lunarOf(day);
+    if(!l.leap){var k=l.m+'-'+l.d;(lmap[k]=lmap[k]||[]).push(new Date(day.getTime()))}
+    day=new Date(day.getTime()+86400000);
+  }
+  people.forEach(function(p){
+    var hits=[];
+    if(p.lunar){hits=lmap[p.m+'-'+p.d]||[]}
+    else{
+      for(var y=r.start.getUTCFullYear();y<=r.end.getUTCFullYear();y++){
+        var t=utc(y,p.m,p.d);
+        if(t.getUTCMonth()+1===p.m&&t>=r.start&&t<=r.end)hits.push(t);
+      }
+    }
+    hits.forEach(function(t){res.push({name:p.name,date:t,orig:p})});
+  });
+  res.sort(function(a,b){return a.date-b.date||a.name.localeCompare(b.name,'ko')});
+  return res;
+}
+
+function md(t){return (t.getUTCMonth()+1)+'/'+t.getUTCDate()}
+
+function renderList(res){
+  var tb=$('rows');tb.innerHTML='';
+  res.forEach(function(x){
+    var tr=document.createElement('tr');
+    var c1=document.createElement('td');c1.textContent=md(x.date)+' ('+DOW[x.date.getUTCDay()]+')';
+    var c2=document.createElement('td');c2.textContent=x.name;
+    var c3=document.createElement('td');
+    c3.textContent=x.orig.m+'/'+x.orig.d+' ';
+    var s=document.createElement('span');s.className='tag'+(x.orig.lunar?' l':'');s.textContent=x.orig.lunar?'음력':'양력';
+    c3.appendChild(s);
+    tr.appendChild(c1);tr.appendChild(c2);tr.appendChild(c3);tb.appendChild(tr);
+  });
+  $('empty').textContent=res.length?('총 '+res.length+'명'):'이 기간에 생일인 직원이 없어요.';
+}
+
+/* 이미지 그리기 (1920x1080) */
+function rr(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath()}
+var HEAD=['#ff7aa2','#ffa24d','#f4bf2a','#5fcf80','#4aa8f0','#a58bf5'];
+var TINT=['#fff1f6','#fff5e8','#fffbe3','#eefbf1','#e8f4ff','#f4f0ff'];
+function drawImage(res,r){
+  var cv=$('cv'),c=cv.getContext('2d'),W=1920,H=1080;
+  var F="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif";
+  var seed=11;function rnd(){seed=(seed*9301+49297)%233280;return seed/233280}
+  var g=c.createLinearGradient(0,0,W,H);g.addColorStop(0,'#ffe3ee');g.addColorStop(.5,'#fff0e0');g.addColorStop(1,'#e6e0ff');
+  c.fillStyle=g;c.fillRect(0,0,W,H);
+  c.fillStyle='#fff';
+  [[200,980,260],[1750,120,220],[1650,950,300],[120,420,160]].forEach(function(b){c.globalAlpha=.35;c.beginPath();c.arc(b[0],b[1],b[2],0,7);c.fill()});
+  var i;
+  for(i=0;i<110;i++){
+    c.save();c.globalAlpha=.5;c.fillStyle=HEAD[i%6];
+    c.translate(rnd()*W,rnd()*H);c.rotate(rnd()*6);
+    if(i%3===0){c.beginPath();c.arc(0,0,6+rnd()*6,0,7);c.fill()}
+    else c.fillRect(-5,-12,10,24);
+    c.restore();
+  }
+  c.globalAlpha=1;
+  /* 가랜드 */
+  c.strokeStyle='#d9b8c8';c.lineWidth=3;c.beginPath();c.moveTo(0,8);c.lineTo(W,8);c.stroke();
+  for(var x=20;x<W;x+=104){
+    c.fillStyle=HEAD[(x/104|0)%6];c.beginPath();c.moveTo(x,8);c.lineTo(x+80,8);c.lineTo(x+40,78);c.closePath();c.fill();
+  }
+  /* 풍선 */
+  [[150,210,0],[W-150,210,4],[270,170,2],[W-270,170,1]].forEach(function(b){
+    c.fillStyle=HEAD[b[2]];c.beginPath();c.ellipse(b[0],b[1],52,66,0,0,7);c.fill();
+    c.fillStyle='rgba(255,255,255,.5)';c.beginPath();c.ellipse(b[0]-17,b[1]-26,12,20,.5,0,7);c.fill();
+    c.strokeStyle='#c9a7b8';c.lineWidth=3;c.beginPath();c.moveTo(b[0],b[1]+66);c.quadraticCurveTo(b[0]+16,b[1]+100,b[0],b[1]+130);c.stroke();
+  });
+  /* 제목 */
+  c.shadowColor='rgba(200,80,120,.25)';c.shadowBlur=26;c.shadowOffsetY=8;
+  c.fillStyle='#fff';rr(c,W/2-520,100,1040,126,63);c.fill();
+  c.shadowColor='transparent';
+  c.textAlign='center';c.textBaseline='alphabetic';
+  c.fillStyle='#e5447c';c.font='800 74px '+F;
+  c.fillText('🎂 생일을 축하합니다 🎉',W/2,186);
+  c.fillStyle='#8a5a74';c.font='600 36px '+F;
+  c.fillText(r.sy+'년 '+r.sm+'월 ~ '+r.cm+'월 생일 직원',W/2,282);
+
+  var groups=[],map={};
+  res.forEach(function(x){
+    var k=x.date.getUTCFullYear()+'-'+x.date.getUTCMonth();
+    if(!map[k]){map[k]={mon:x.date.getUTCMonth()+1,items:[]};groups.push(map[k])}
+    map[k].items.push(x);
+  });
+  if(!groups.length){c.fillStyle='#8a5a74';c.font='700 56px '+F;c.fillText('이 기간 생일자가 없습니다',W/2,640);return}
+  var n=groups.length,cols=n<=2?n:(n===4?2:3),rows=Math.ceil(n/cols);
+  var gap=40,top=320,aw=W-200,ah=H-top-50;
+  var cw=(aw-gap*(cols-1))/cols,ch=(ah-gap*(rows-1))/rows;
+  var HH=84,inner=ch-HH-48,fs=54;
+  function fits(f){
+    return groups.every(function(gr){
+      var lh=f*1.55,len=gr.items.length;
+      if(len*lh<=inner)return true;
+      return cw/2>f*7.5&&Math.ceil(len/2)*lh<=inner;
+    });
+  }
+  while(fs>22&&!fits(fs))fs-=2;
+  groups.forEach(function(gr,idx){
+    var cx=100+(idx%cols)*(cw+gap),cy=top+Math.floor(idx/cols)*(ch+gap),hc=HEAD[idx%6];
+    c.shadowColor='rgba(150,70,110,.22)';c.shadowBlur=30;c.shadowOffsetY=10;
+    c.fillStyle=TINT[idx%6];rr(c,cx,cy,cw,ch,44);c.fill();c.shadowColor='transparent';
+    c.save();rr(c,cx,cy,cw,ch,44);c.clip();c.fillStyle=hc;c.fillRect(cx,cy,cw,HH);c.restore();
+    c.fillStyle='#fff';c.font='800 50px '+F;c.textAlign='center';
+    c.fillText('🎈 '+gr.mon+'월 🎈',cx+cw/2,cy+60);
+    var lh=fs*1.55,len=gr.items.length,ec=len*lh<=inner?1:2,per=Math.ceil(len/ec);
+    var colW=cw/ec,pw=colW-(ec===1?120:44),ph=fs*1.3;
+    gr.items.forEach(function(x,k){
+      var col=Math.floor(k/per),row=k%per;
+      var px=cx+col*colW+(colW-pw)/2,py=cy+HH+26+row*lh;
+      c.fillStyle='#fff';c.shadowColor='rgba(150,70,110,.12)';c.shadowBlur=8;c.shadowOffsetY=3;
+      rr(c,px,py,pw,ph,ph/2);c.fill();c.shadowColor='transparent';
+      var bw=fs*2.5;
+      c.fillStyle=hc;rr(c,px+6,py+6,bw,ph-12,(ph-12)/2);c.fill();
+      c.textAlign='center';c.fillStyle='#fff';c.font='800 '+(fs*.78)+'px '+F;
+      c.fillText(x.date.getUTCDate()+'일',px+6+bw/2,py+ph/2+fs*.27);
+      c.textAlign='left';c.fillStyle='#4a2a3e';c.font='700 '+fs+'px '+F;
+      c.fillText(x.name,px+bw+30,py+ph/2+fs*.34);
+    });
+  });
+}
+
+function run(){
+  refreshParse();
+  var r=getRange();
+  if(!people.length){alert('직원 목록을 먼저 붙여넣어 주세요.');return}
+  if(!r){alert('지난 교육 달과 이번 교육 날짜를 확인해 주세요.');return}
+  var res=find(r);
+  renderList(res);
+  drawImage(res,r);
+  $('out').classList.remove('hide');$('imgBox').classList.remove('hide');
+  save();
+  $('out').scrollIntoView({behavior:'smooth'});
+}
+
+function save(){
+  try{localStorage.setItem(KEY,JSON.stringify({src:$('src').value,prev:$('prev').value,cur:$('cur').value}))}catch(e){}
+}
+function load(){
+  var s={};
+  try{s=JSON.parse(localStorage.getItem(KEY)||'{}')}catch(e){}
+  var now=new Date();
+  $('src').value=s.src||'';
+  $('prev').value=s.prev||'';
+  $('cur').value=s.cur||(now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate()));
+}
+
+$('src').addEventListener('input',function(){refreshParse();save()});
+$('prev').addEventListener('change',showRange);
+$('cur').addEventListener('change',showRange);
+$('go').addEventListener('click',run);
+$('dl').addEventListener('click',function(){
+  var name='생일자_'+$('cur').value+'.png';
+  function fallback(){var a=document.createElement('a');a.download=name;a.href=$('cv').toDataURL('image/png');a.click()}
+  if(!(window.claude&&window.claude.use)){fallback();return}
+  window.claude.use('downloads').then(function(dls){
+    if(!dls){fallback();return}
+    $('cv').toBlob(function(blob){
+      if(!blob){fallback();return}
+      dls.save({filename:name,data:blob}).catch(function(e){
+        if(e&&e.code==='declined')return;
+        alert('이미지를 저장하지 못했어요. 이미지를 길게 누르거나 우클릭해서 저장해 주세요.');
+      });
+    },'image/png');
+  });
+});
+load();refreshParse();showRange();
+})();
+</script>
+</body>
+</html>
