@@ -102,8 +102,8 @@ function refreshParse(){
   $('parseMsg').textContent=$('src').value.trim()?('생일 정보가 있는 직원 '+r.ok.length+'명 인식'+(r.skip?' · 생일 없음 '+r.skip+'명 제외':'')):'';
 }
 
-/* 음력 변환: 브라우저 내장 중국/한국 음력 달력 사용 */
-var fmt=new Intl.DateTimeFormat('en-u-ca-chinese',{month:'numeric',day:'numeric',timeZone:'UTC'});
+/* 음력 변환: 브라우저 내장 한국 음력(dangi) 달력 사용 - 네이버/구글 달력과 동일 기준 */
+var fmt=new Intl.DateTimeFormat('en-u-ca-dangi',{month:'numeric',day:'numeric',timeZone:'UTC'});
 function lunarOf(dt){
   var p=fmt.formatToParts(dt),m,d,leap=false;
   p.forEach(function(x){
@@ -139,14 +139,18 @@ function find(r){
   }
   people.forEach(function(p){
     var hits=[];
-    if(p.lunar){hits=lmap[p.m+'-'+p.d]||[]}
+    var adj=false;
+    if(p.lunar){
+      hits=lmap[p.m+'-'+p.d]||[];
+      if(!hits.length&&p.d===30){hits=lmap[p.m+'-29']||[];adj=hits.length>0}
+    }
     else{
       for(var y=r.start.getUTCFullYear();y<=r.end.getUTCFullYear();y++){
         var t=utc(y,p.m,p.d);
         if(t.getUTCMonth()+1===p.m&&t>=r.start&&t<=r.end)hits.push(t);
       }
     }
-    hits.forEach(function(t){res.push({name:p.name,date:t,orig:p})});
+    hits.forEach(function(t){res.push({name:p.name,date:t,orig:p,adj:adj})});
   });
   res.sort(function(a,b){return a.date-b.date||a.name.localeCompare(b.name,'ko')});
   return res;
@@ -164,6 +168,7 @@ function renderList(res){
     c3.textContent=x.orig.m+'/'+x.orig.d+' ';
     var s=document.createElement('span');s.className='tag'+(x.orig.lunar?' l':'');s.textContent=x.orig.lunar?'음력':'양력';
     c3.appendChild(s);
+    if(x.adj){var n=document.createElement('span');n.className='msg';n.textContent=' 그달은 29일까지라 29일로 표시';c3.appendChild(n)}
     tr.appendChild(c1);tr.appendChild(c2);tr.appendChild(c3);tb.appendChild(tr);
   });
   $('empty').textContent=res.length?('총 '+res.length+'명'):'이 기간에 생일인 직원이 없어요.';
